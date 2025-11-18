@@ -1,0 +1,332 @@
+import Foundation
+import UIKit
+
+public class AdOptWebviewConfig {
+    var toolbarMode: String = "dark"
+    var toolbarTitle: String = "Default Title"
+    var titleAlignment: String = "left"
+    var url: String?
+    var isFullscreen: Bool = true
+    var isDebugEnabled: Bool = false
+    var userAgent: String = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    
+    var fontFamily: String?
+    var fontSize: Int = 18
+    var toolbarBackgroundColor: UIColor?
+    var titleTextColor: UIColor?
+    var backButtonImageName: String?
+    var closeButtonImageName: String?
+    
+    var leftButtonRole: ButtonRole = .back
+    var rightButtonRole: ButtonRole = .close
+    var leftButtonVisible: Bool = true
+    var rightButtonVisible: Bool = true
+    var leftButtonIcon: ButtonIcon = .auto
+    var rightButtonIcon: ButtonIcon = .auto
+    
+    var backAction: BackAction = .historyBack
+    var backConfirmMessage: String = "한번 더 누르면 창이 닫힙니다"
+    var backConfirmTimeout: TimeInterval = 2.0
+    
+    var loadingBackgroundColor: UIColor?
+    var progressBarColor: UIColor?
+    var progressBarStyle: Int = 0
+    var progressBarImageName: String?
+    var backButtonLeftMargin: Int = -1
+    var closeButtonLeftMargin: Int = -1
+    var backButtonIconSize: Int = 33
+    var closeButtonIconSize: Int = 33
+    var toolbarHeight: Int = 56
+    var progressBarAnimationDuration: Double = 3.0
+    
+    var titleLeftMargin: Int? = nil
+    var titleRightMargin: Int? = nil
+    var titleCenterOffset: Int = 0
+    var backButtonTopMargin: Int = -1
+    var backButtonBottomMargin: Int = -1
+    var backButtonRightMargin: Int = -1
+    var closeButtonRightMargin: Int = -1
+    var closeButtonTopMargin: Int = -1
+    var closeButtonBottomMargin: Int = -1
+    
+    var allowImageSave: Bool = false
+    var allowImageZoom: Bool = false
+    var allowImageDrag: Bool = false
+    var allowImageSelect: Bool = false
+
+    var preventCache: Bool = false
+    
+    var isBannerEnabled: Bool = false
+    var bannerHeight: Int = 50
+    
+    public enum ButtonRole {
+        case back
+        case close
+        case none
+    }
+    
+    public enum BackAction {
+        case exit
+        case confirmExit
+        case historyBack
+        case ignore
+    }
+    
+    public enum ButtonIcon {
+        case auto
+        case back
+        case close
+        case custom(String)
+    }
+    
+    private init() {}
+    
+    public class Builder {
+        private let config: AdOptWebviewConfig
+        
+        public init() {
+            config = AdOptWebviewConfig()
+        }
+        
+        public func setToolbarMode(_ mode: String) -> Builder {
+            config.toolbarMode = mode
+            return self
+        }
+        
+        public func setToolbarTitle(_ title: String) -> Builder {
+            config.toolbarTitle = title
+            return self
+        }
+        
+        public func setTitleAlignment(_ alignment: String) -> Builder {
+            config.titleAlignment = alignment
+            return self
+        }
+        
+        public func setUrl(_ url: String) -> Builder {
+            config.url = url
+            return self
+        }
+        
+        public func setFullscreen(_ fullscreen: Bool) -> Builder {
+            config.isFullscreen = fullscreen
+            return self
+        }
+        
+        public func setDebugEnabled(_ enabled: Bool) -> Builder {
+            config.isDebugEnabled = enabled
+            return self
+        }
+        
+        public func setUserAgent(_ userAgent: String) -> Builder {
+            config.userAgent = userAgent
+            return self
+        }
+        
+        public func setLeftButtonRole(_ role: ButtonRole) -> Builder {
+            config.leftButtonRole = role
+            return self
+        }
+        
+        public func setRightButtonRole(_ role: ButtonRole) -> Builder {
+            config.rightButtonRole = role
+            return self
+        }
+        
+        public func setLeftButtonIcon(_ icon: ButtonIcon) -> Builder {
+            config.leftButtonIcon = icon
+            return self
+        }
+
+        public func setRightButtonIcon(_ icon: ButtonIcon) -> Builder {
+            config.rightButtonIcon = icon
+            return self
+        }
+        
+        public func setLeftButtonVisible(_ visible: Bool) -> Builder {
+            config.leftButtonVisible = visible
+            return self
+        }
+        
+        public func setRightButtonVisible(_ visible: Bool) -> Builder {
+            config.rightButtonVisible = visible
+            return self
+        }
+        
+        public func setBackAction(_ action: BackAction) -> Builder {
+            config.backAction = action
+            return self
+        }
+        
+        public func setBackConfirmMessage(_ message: String) -> Builder {
+            config.backConfirmMessage = message
+            return self
+        }
+        
+        public func setBackConfirmTimeout(_ timeout: TimeInterval) -> Builder {
+            config.backConfirmTimeout = timeout
+            return self
+        }
+        
+        public func setTitleLeftMargin(_ margin: Int) -> Builder {
+            config.titleLeftMargin = margin
+            return self
+        }
+
+        public func setTitleRightMargin(_ margin: Int) -> Builder {
+            config.titleRightMargin = margin
+            return self
+        }
+
+        public func setTitleCenterOffset(_ offset: Int) -> Builder {
+            config.titleCenterOffset = offset
+            return self
+        }
+        
+        public func setFontFamily(_ fontFamily: String) -> Builder {
+            config.fontFamily = fontFamily
+            return self
+        }
+        
+        public func setFontSize(_ fontSize: Int) -> Builder {
+            config.fontSize = fontSize
+            return self
+        }
+        
+        public func setToolbarBackgroundColor(_ color: UIColor) -> Builder {
+            config.toolbarBackgroundColor = color
+            return self
+        }
+        
+        public func setTitleTextColor(_ color: UIColor) -> Builder {
+            config.titleTextColor = color
+            return self
+        }
+        
+        public func setBackButtonIcon(_ imageName: String) -> Builder {
+            config.backButtonImageName = imageName
+            return self
+        }
+        
+        public func setCloseButtonIcon(_ imageName: String) -> Builder {
+            config.closeButtonImageName = imageName
+            return self
+        }
+        
+        public func setLoadingBackgroundColor(_ color: UIColor) -> Builder {
+            config.loadingBackgroundColor = color
+            return self
+        }
+        
+        public func setProgressBarColor(_ color: UIColor) -> Builder {
+            config.progressBarColor = color
+            return self
+        }
+        
+        public func setProgressBarStyle(_ style: Int) -> Builder {
+            config.progressBarStyle = style
+            return self
+        }
+        
+        public func setProgressBarImage(_ imageName: String, animationDuration: Double = 3.0) -> Builder {
+            config.progressBarImageName = imageName
+            config.progressBarAnimationDuration = animationDuration
+            config.progressBarStyle = 2
+            return self
+        }
+        
+        public func setBackButtonLeftMargin(_ margin: Int) -> Builder {
+            config.backButtonLeftMargin = margin
+            return self
+        }
+        
+        public func setCloseButtonRightMargin(_ margin: Int) -> Builder {
+            config.closeButtonRightMargin = margin
+            return self
+        }
+        
+        public func setToolbarHeight(_ height: Int) -> Builder {
+            config.toolbarHeight = height
+            return self
+        }
+        
+        public func setBackButtonIconSize(_ size: Int) -> Builder {
+            config.backButtonIconSize = size
+            return self
+        }
+        
+        public func setCloseButtonIconSize(_ size: Int) -> Builder {
+            config.closeButtonIconSize = size
+            return self
+        }
+        public func setBackButtonTopMargin(_ margin: Int) -> Builder {
+            config.backButtonTopMargin = margin
+            return self
+        }
+
+        public func setBackButtonBottomMargin(_ margin: Int) -> Builder {
+            config.backButtonBottomMargin = margin
+            return self
+        }
+
+        public func setBackButtonRightMargin(_ margin: Int) -> Builder {
+            config.backButtonRightMargin = margin
+            return self
+        }
+
+        public func setCloseButtonLeftMargin(_ margin: Int) -> Builder {
+            config.closeButtonLeftMargin = margin
+            return self
+        }
+
+        public func setCloseButtonTopMargin(_ margin: Int) -> Builder {
+            config.closeButtonTopMargin = margin
+            return self
+        }
+
+        public func setCloseButtonBottomMargin(_ margin: Int) -> Builder {
+            config.closeButtonBottomMargin = margin
+            return self
+        }
+
+        public func setPreventCache(_ prevent: Bool) -> Builder {
+            config.preventCache = prevent
+            return self
+        }
+        
+        public func setAllowImageSave(_ allow: Bool) -> Builder {
+            config.allowImageSave = allow
+            return self
+        }
+        
+        public func setAllowImageZoom(_ allow: Bool) -> Builder {
+            config.allowImageZoom = allow
+            return self
+        }
+        
+        public func setAllowImageDrag(_ allow: Bool) -> Builder {
+            config.allowImageDrag = allow
+            return self
+        }
+        
+        public func setAllowImageSelect(_ allow: Bool) -> Builder {
+            config.allowImageSelect = allow
+            return self
+        }
+        public func setBannerEnabled(_ enabled: Bool) -> Builder {
+            config.isBannerEnabled = enabled
+            return self
+        }
+        
+        public func setBannerHeight(_ height: Int) -> Builder {
+            let validatedHeight = max(32, min(250, height)) 
+            config.bannerHeight = validatedHeight
+            return self
+        }
+
+        
+        public func build() -> AdOptWebviewConfig {
+            return config
+        }
+    }
+}
