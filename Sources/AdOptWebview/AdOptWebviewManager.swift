@@ -30,7 +30,7 @@ public class AdOptWebviewManager {
     public func launch(from viewController: UIViewController) {
         checkInitialization()
         
-        let browserVC = AdOptWebviewViewController(config: config!)
+        let browserVC = AdOptWebviewController(config: config!)
         browserVC.modalPresentationStyle = .fullScreen
         viewController.present(browserVC, animated: true)
     }
@@ -39,7 +39,7 @@ public class AdOptWebviewManager {
         checkInitialization()
         
         if let currentConfig = config {
-            if let presentedVC = viewController.presentedViewController as? AdOptWebviewViewController {
+            if let presentedVC = viewController.presentedViewController as? AdOptWebviewController {
                 presentedVC.dismiss(animated: false) {
                     self.launchNewBrowser(from: viewController, url: url, config: currentConfig)
                 }
@@ -73,7 +73,7 @@ public class AdOptWebviewManager {
         
         copyConfigProperties(from: config, to: newConfig)
         
-        let browserVC = AdOptWebviewViewController(config: newConfig)
+        let browserVC = AdOptWebviewController(config: newConfig)
         browserVC.modalPresentationStyle = .fullScreen
         viewController.present(browserVC, animated: true)
     }
@@ -140,8 +140,8 @@ public class AdOptWebviewManager {
             }
         }
     }
-    private func findPresentedBrowser(from viewController: UIViewController) -> AdOptWebviewViewController? {
-        if let browserVC = viewController as? AdOptWebviewViewController {
+    private func findPresentedBrowser(from viewController: UIViewController) -> AdOptWebviewController? {
+        if let browserVC = viewController as? AdOptWebviewController {
             return browserVC
         }
         

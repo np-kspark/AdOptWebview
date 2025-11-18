@@ -11,7 +11,7 @@ extension WKWebView {
     }
 }
 
-extension AdOptWebviewViewController {
+extension AdOptWebviewController {
     func setupJavaScriptInterface(for webView: WKWebView) {
         let basicScript = """
         window._swiftAdLoadTimeoutMs = 5000;
@@ -98,9 +98,9 @@ extension AdOptWebviewViewController {
                     });
                 },
                 getSdkVersion: function() {
-                    return '\(AdOptWebviewViewController.SDK_VERSION)';
+                    return '\(AdOptWebviewController.SDK_VERSION)';
                 },
-
+        
                 requestRewardedAd: function(adUnit, callbackFunction) {
                     window.webkit.messageHandlers.iOSInterface.postMessage({
                         type: 'requestRewardedAd',
@@ -184,33 +184,10 @@ extension AdOptWebviewViewController {
                         type: 'syncCookies'
                     });
                 },
-                triggerAd: function(adUnit, callbackFunction) {
-                    window.webkit.messageHandlers.iOSInterface.postMessage({
-                        type: 'reward',
-                        adUnit: adUnit,
-                        callbackFunction: callbackFunction
-                    });
-                },
                 openExternalURL: function(url) {
                     window.webkit.messageHandlers.iOSInterface.postMessage({
                         type: 'openExternalURL',
                         url: url
-                    });
-                },
-
-                triggerinterstitialAd: function(adUnit, callbackFunction) {
-                    window.webkit.messageHandlers.iOSInterface.postMessage({
-                        type: 'interstitial',
-                        adUnit: adUnit,
-                        callbackFunction: callbackFunction
-                    });
-                },
-                
-                triggerRewardedInterstitialAd: function(adUnit, callbackFunction) {
-                    window.webkit.messageHandlers.iOSInterface.postMessage({
-                        type: 'rewarded_interstitial',
-                        adUnit: adUnit,
-                        callbackFunction: callbackFunction
                     });
                 },
                 

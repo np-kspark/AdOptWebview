@@ -5,7 +5,7 @@ import AppTrackingTransparency
 import AdSupport
 import Foundation
 
-class AdOptWebviewViewController: UIViewController, WKUIDelegate, BannerViewDelegate {
+class AdOptWebviewController: UIViewController, WKUIDelegate, BannerViewDelegate {
     static let SDK_VERSION = "1.2.0"
     
     private var webView: WKWebView!
@@ -84,6 +84,14 @@ class AdOptWebviewViewController: UIViewController, WKUIDelegate, BannerViewDele
 
     private var initialDomain: String?
     private var currentRootDomain: String?
+    
+    private let BANNER_LOAD_TIMEOUT_INTERVAL: TimeInterval = 1.0
+
+    private var isBannerRequestTimedOut: Bool = false
+    private var bannerTimeoutWorkItem: DispatchWorkItem?
+
+    private var isLoadingBanner: Bool = false
+    
     init(config: AdOptWebviewConfig) {
         self.config = config
         self.currentBackAction = config.backAction
@@ -98,11 +106,63 @@ class AdOptWebviewViewController: UIViewController, WKUIDelegate, BannerViewDele
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
+    private func setupBannerTimeout(for callbackFunction: String, adUnit: String) {
+        bannerTimeoutWorkItem?.cancel()
+        
+        let timeoutWork = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            
+            if self.isLoadingBanner {
+                print("=== Banner Load Timeout ===")
+                
+                self.isBannerRequestTimedOut = true
+                self.isLoadingBanner = false
+                
+                DispatchQueue.main.async {
+                    if let bannerAdView = self.bannerAdView {
+                        self.bannerContainer.subviews.forEach { $0.removeFromSuperview() }
+                        self.bannerAdView = nil
+                    }
+                    
+                    self.collapseBannerArea()
+                }
+                
+                let timeoutErrorInfo = self.createBannerTimeoutErrorInfo(adUnit: adUnit)
+                
+                self.executeBannerCallback(
+                    callbackFunction,
+                    adType: "banner",
+                    status: "timeout",
+                    adUnit: adUnit,
+                    errorCode: -1001,
+                    detailInfo: timeoutErrorInfo
+                )
+            }
+        }
+        
+        bannerTimeoutWorkItem = timeoutWork
+        DispatchQueue.main.asyncAfter(deadline: .now() + BANNER_LOAD_TIMEOUT_INTERVAL, execute: timeoutWork)
+    }
+    private func createBannerTimeoutErrorInfo(adUnit: String) -> String {
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+        return """
+        {"timestamp":\(timestamp),"adType":"banner","adUnit":"\(adUnit)","sdkVersion":"\(Self.SDK_VERSION)","errorType":"TIMEOUT","errorCode":-1001,"message":"Banner ad load timeout after \(BANNER_LOAD_TIMEOUT_INTERVAL) seconds","errorCategory":"TIMEOUT","isRetryable":true,"timeoutMs":\(Int(BANNER_LOAD_TIMEOUT_INTERVAL * 1000))}
+        """
+    }
     public func setBannerHeight(_ newHeight: Int) {
         let validatedHeight = max(32, min(250, newHeight))
         self.bannerHeight = validatedHeight
     }
     func bannerViewDidReceiveAd(_ bannerView: BannerView) {
+        if isBannerRequestTimedOut {
+            print("=== Banner Load Success Ignored (Timeout Already Occurred) ===")
+            return
+        }
+        cancelBannerTimeout()
+        isLoadingBanner = false
+        
+        print("=== Banner Load Success ===")
+        
         let successInfo = createSimpleSuccessInfo("banner", adUnit: currentBannerAdUnit ?? "")
         if let callbackFunction = bannerCallbackFunction {
             executeBannerCallback(callbackFunction, adType: "banner", status: "success", adUnit: currentBannerAdUnit ?? "", errorCode: 0, detailInfo: successInfo)
@@ -113,25 +173,73 @@ class AdOptWebviewViewController: UIViewController, WKUIDelegate, BannerViewDele
     }
     
     func bannerView(_ bannerView: BannerView, didFailToReceiveAdWithError error: Error) {
+        if isBannerRequestTimedOut {
+            print("=== Banner Load Failed Ignored (Timeout Already Occurred) ===")
+            return
+        }
+        
+        cancelBannerTimeout()
+        
+        isLoadingBanner = false
+        
         print("=== Banner Load Failed ===")
         print("Error: \(error)")
-        print("Error code: \((error as NSError).code)")
-        print("Error domain: \((error as NSError).domain)")
-        print("Error description: \(error.localizedDescription)")
-        print("Error userInfo: \((error as NSError).userInfo)")
         
         let errorCode = (error as NSError).code
         let errorMessage = error.localizedDescription
-        let detailedErrorInfo = """
-        {"timestamp":\(Int(Date().timeIntervalSince1970 * 1000)),"adType":"banner","adUnit":"\(currentBannerAdUnit ?? "")","sdkVersion":"\(Self.SDK_VERSION)","errorType":"LOAD_ERROR","errorCode":\(errorCode),"message":"\(errorMessage)"}
-        """
+        let detailedErrorInfo = createBannerLoadErrorInfo(error: error, adUnit: currentBannerAdUnit ?? "")
         
         if let callbackFunction = bannerCallbackFunction {
             executeBannerCallback(callbackFunction, adType: "banner", status: "load_failed", adUnit: currentBannerAdUnit ?? "", errorCode: errorCode, detailInfo: detailedErrorInfo)
         }
-        
     }
-    
+    private func cancelBannerTimeout() {
+        bannerTimeoutWorkItem?.cancel()
+        bannerTimeoutWorkItem = nil
+    }
+
+    private func createBannerLoadErrorInfo(error: Error, adUnit: String) -> String {
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+        let errorCode = (error as NSError).code
+        let errorMessage = error.localizedDescription.replacingOccurrences(of: "\"", with: "\\\"")
+        
+        return """
+        {"timestamp":\(timestamp),"adType":"banner","adUnit":"\(adUnit)","sdkVersion":"\(Self.SDK_VERSION)","errorType":"LOAD_ERROR","errorCode":\(errorCode),"message":"\(errorMessage)","errorCategory":"LOAD_FAILED","isRetryable":true}
+        """
+    }
+    private func cleanupBannerTimeout() {
+        cancelBannerTimeout()
+        isLoadingBanner = false
+        isBannerRequestTimedOut = false
+    }
+    // 배너 영역 설정
+    private func setupBannerArea() {
+        self.bannerContainer.isHidden = false
+        self.bannerContainer.alpha = 1.0
+        
+        self.bannerContainer.constraints.forEach { constraint in
+            if constraint.firstAttribute == .height {
+                constraint.constant = CGFloat(self.bannerHeight)
+            }
+        }
+        
+        self.view.setNeedsLayout()
+        self.view.layoutIfNeeded()
+    }
+
+    // 배너 제약조건 설정
+    private func setupBannerConstraints(_ bannerAdView: BannerView) {
+        bannerAdView.translatesAutoresizingMaskIntoConstraints = false
+        
+        let constraints = [
+            bannerAdView.centerXAnchor.constraint(equalTo: self.bannerContainer.centerXAnchor),
+            bannerAdView.centerYAnchor.constraint(equalTo: self.bannerContainer.centerYAnchor),
+            bannerAdView.widthAnchor.constraint(lessThanOrEqualTo: self.bannerContainer.widthAnchor),
+            bannerAdView.heightAnchor.constraint(lessThanOrEqualTo: self.bannerContainer.heightAnchor)
+        ]
+        
+        NSLayoutConstraint.activate(constraints)
+    }
     func bannerViewDidRecordClick(_ bannerView: BannerView) {
         currentBackAction = .historyBack
     }
@@ -199,93 +307,69 @@ class AdOptWebviewViewController: UIViewController, WKUIDelegate, BannerViewDele
             }
         }
     }
+    
     public func loadBannerAd(_ adUnit: String, callbackFunction: String) {
         print("=== Banner Ad Load Start ===")
-        print("AdUnit: \(adUnit)")
-        print("CallbackFunction: \(callbackFunction)")
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
+            // 배너 기능 비활성화 체크
             if !self.isBannerEnabled {
-                print("Banner ads not enabled")
                 self.executeBannerCallback(callbackFunction, adType: "banner", status: "banner_not_enabled", adUnit: adUnit, errorCode: -2001, detailInfo: "Banner ads are not enabled")
                 return
             }
             
+            // 로딩 상태 초기화
+            self.isLoadingBanner = true
+            self.isBannerRequestTimedOut = false
+            
+            // 기존 배너 광고 제거
             if self.bannerAdView != nil {
-                print("Removing existing banner ad")
                 self.bannerContainer.subviews.forEach { $0.removeFromSuperview() }
                 self.bannerAdView = nil
             }
             
-            self.currentBannerAdUnit = adUnit.trimmingCharacters(in: .whitespacesAndNewlines)
+            // 타임아웃 설정
+            self.setupBannerTimeout(for: callbackFunction, adUnit: adUnit)
+            
+            let currentAdUnit = adUnit.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.currentBannerAdUnit = currentAdUnit
             self.bannerCallbackFunction = callbackFunction
-
-            self.bannerContainer.isHidden = false
-            self.bannerContainer.alpha = 1.0
             
-            self.bannerContainer.constraints.forEach { constraint in
-                if constraint.firstAttribute == .height {
-                    print("Found height constraint, changing from \(constraint.constant) to \(self.bannerHeight)")
-                    constraint.constant = CGFloat(self.bannerHeight)
-                }
-            }
+            // 배너 영역 설정
+            self.setupBannerArea()
             
-            self.view.setNeedsLayout()
-            self.view.layoutIfNeeded()
+            // 배너 광고 뷰 생성
+            self.createBannerAdView(for: currentAdUnit, callbackFunction: callbackFunction)
+        }
+    }
+    private func createBannerAdView(for adUnit: String, callbackFunction: String) {
+        let containerWidth = self.bannerContainer.frame.width > 0 ? self.bannerContainer.frame.width : self.view.frame.width
+        let adWidth = max(containerWidth, 320)
+        let adaptiveSize = inlineAdaptiveBanner(width: adWidth, maxHeight: CGFloat(self.bannerHeight))
+        
+        // 유효한 광고 사이즈 체크
+        if isAdSizeEqualToSize(size1: adaptiveSize, size2: AdSizeInvalid) {
+            self.cancelBannerTimeout()
+            self.executeBannerCallback(callbackFunction, adType: "banner", status: "error", adUnit: adUnit, errorCode: -3001, detailInfo: "Invalid ad size")
+            return
+        }
+        
+        // 배너 광고 뷰 생성
+        self.bannerAdView = BannerView(adSize: adaptiveSize)
+        self.bannerAdView?.adUnitID = adUnit
+        self.bannerAdView?.rootViewController = self
+        self.bannerAdView?.delegate = self
+        
+        // 배너 뷰를 컨테이너에 추가
+        if let bannerAdView = self.bannerAdView {
+            self.bannerContainer.addSubview(bannerAdView)
+            self.setupBannerConstraints(bannerAdView)
             
-            var currentView: UIView? = self.bannerContainer
-            var hierarchy = "Banner container hierarchy: "
-            while currentView != nil {
-                hierarchy += "\(type(of: currentView!)) -> "
-                currentView = currentView?.superview
-            }
-            self.view.layoutIfNeeded()
-            
-            let containerWidth = self.bannerContainer.frame.width > 0 ? self.bannerContainer.frame.width : self.view.frame.width
-            
-            let adWidth = max(containerWidth, 320)
-            let adaptiveSize = inlineAdaptiveBanner(width: adWidth, maxHeight: CGFloat(self.bannerHeight))
-            
-            if isAdSizeEqualToSize(size1: adaptiveSize, size2: AdSizeInvalid) {
-                print("ERROR: Invalid ad size detected!")
-                self.executeBannerCallback(callbackFunction, adType: "banner", status: "error", adUnit: adUnit, errorCode: -3001, detailInfo: "Invalid ad size")
-                return
-            }
-            
-            self.bannerAdView = BannerView(adSize: adaptiveSize)
-            
-            if let adUnit = self.currentBannerAdUnit {
-                self.bannerAdView?.adUnitID = adUnit
-            }
-            self.bannerAdView?.rootViewController = self
-            
-            self.bannerAdView?.delegate = self
-
+            // 광고 요청
             let request = Request()
-            if let bannerAdView = self.bannerAdView {
-                self.bannerContainer.addSubview(bannerAdView)
-                
-                bannerAdView.translatesAutoresizingMaskIntoConstraints = false
-                
-                let constraints = [
-                    bannerAdView.centerXAnchor.constraint(equalTo: self.bannerContainer.centerXAnchor),
-                    bannerAdView.centerYAnchor.constraint(equalTo: self.bannerContainer.centerYAnchor),
-                    bannerAdView.widthAnchor.constraint(lessThanOrEqualTo: self.bannerContainer.widthAnchor),
-                    bannerAdView.heightAnchor.constraint(lessThanOrEqualTo: self.bannerContainer.heightAnchor)
-                ]
-                
-                NSLayoutConstraint.activate(constraints)
-
-                self.view.setNeedsLayout()
-                self.view.layoutIfNeeded()
-                
-                bannerAdView.load(request)
-                
-                
-            } else {
-            }
+            bannerAdView.load(request)
         }
     }
     
@@ -1202,7 +1286,7 @@ class AdOptWebviewViewController: UIViewController, WKUIDelegate, BannerViewDele
 
     private func setupButtonIcon(_ button: UIButton, icon: AdOptWebviewConfig.ButtonIcon, role: AdOptWebviewConfig.ButtonRole) {
         
-        let currentBundle = Bundle(for: AdOptWebviewViewController.self)
+        let currentBundle = Bundle(for: AdOptWebviewController.self)
         
         let img1 = UIImage(named: "_ico", in: Bundle.resourceBundle, compatibleWith: nil)
         
@@ -1717,7 +1801,7 @@ class AdOptWebviewViewController: UIViewController, WKUIDelegate, BannerViewDele
         }
     }
 }
-extension AdOptWebviewViewController {
+extension AdOptWebviewController {
     
     func updateButtonRoles(leftRole: AdOptWebviewConfig.ButtonRole, rightRole: AdOptWebviewConfig.ButtonRole, leftIcon: AdOptWebviewConfig.ButtonIcon, rightIcon: AdOptWebviewConfig.ButtonIcon) {
         DispatchQueue.main.async { [weak self] in
@@ -1783,7 +1867,7 @@ extension AdOptWebviewViewController {
         
     }
 }
-extension AdOptWebviewViewController: WKNavigationDelegate {
+extension AdOptWebviewController: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url else {
@@ -2186,12 +2270,11 @@ extension AdOptWebviewViewController: WKNavigationDelegate {
         webView.evaluateJavaScript(kakaoScript, completionHandler: nil)
     }
     
-    
     func requestRewardedAd(adUnit: String, callbackFunction: String) {
         isUsingUnifiedCallback = true
         currentCallbackType = "unified"
         if isLoadingAd {
-            executeUnifiedCallback(callbackFunction: callbackFunction, adType: "rewarded", status: "already_loading", adUnit: adUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: -1004, detailInfo: "Ad is already being loaded")
+            executeUnifiedCallback(callbackFunction: callbackFunction, adType: "rewarded", status: "already_loading", adUnit: adUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: -1004, detailInfo: "Ad is already being loaded")
             return
         }
         
@@ -2212,7 +2295,7 @@ extension AdOptWebviewViewController: WKNavigationDelegate {
         isUsingUnifiedCallback = true
         currentCallbackType = "unified"
         if isLoadingAd {
-            executeUnifiedCallback(callbackFunction: callbackFunction, adType: "interstitial", status: "already_loading", adUnit: adUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: -1004, detailInfo: "Ad is already being loaded")
+            executeUnifiedCallback(callbackFunction: callbackFunction, adType: "interstitial", status: "already_loading", adUnit: adUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: -1004, detailInfo: "Ad is already being loaded")
             return
         }
         
@@ -2258,7 +2341,7 @@ extension AdOptWebviewViewController: WKNavigationDelegate {
                     self.isAdRequestTimeOut = true
                     
                     let timeoutInfo = self.createTimeoutErrorInfo(adType: "rewarded", adUnit: currentAdUnit)
-                    self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "rewarded", status: "timeout", adUnit: currentAdUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: -1001, detailInfo: timeoutInfo)
+                    self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "rewarded", status: "timeout", adUnit: currentAdUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: -1001, detailInfo: timeoutInfo)
                 }
             }
             
@@ -2283,7 +2366,7 @@ extension AdOptWebviewViewController: WKNavigationDelegate {
                     let detailedError = self.getDetailedLoadErrorCode(error: error)
                     let detailedErrorInfo = self.createDetailedLoadErrorInfo(error: error, adType: "rewarded", adUnit: currentAdUnit)
                     
-                    self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "rewarded", status: detailedError, adUnit: currentAdUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: (error as NSError).code, detailInfo: detailedErrorInfo)
+                    self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "rewarded", status: detailedError, adUnit: currentAdUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: (error as NSError).code, detailInfo: detailedErrorInfo)
                     return
                 }
                 
@@ -2309,7 +2392,7 @@ extension AdOptWebviewViewController: WKNavigationDelegate {
             
             guard let rewardedAd = rewardedAd else {
                 let noAdInfo = createNoAdAvailableInfo(adType: "rewarded", adUnit: callbackAdUnit)
-                executeUnifiedCallback(callbackFunction: callbackFunction, adType: "rewarded", status: "ad_not_ready", adUnit: callbackAdUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: -1006, detailInfo: noAdInfo)
+                executeUnifiedCallback(callbackFunction: callbackFunction, adType: "rewarded", status: "ad_not_ready", adUnit: callbackAdUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: -1006, detailInfo: noAdInfo)
                 return
             }
             
@@ -2330,7 +2413,7 @@ extension AdOptWebviewViewController: WKNavigationDelegate {
                     adType: "rewarded",
                     status: "reward_earned",
                     adUnit: callbackAdUnit,
-                    sdkVersion: AdOptWebviewViewController.SDK_VERSION,
+                    sdkVersion: AdOptWebviewController.SDK_VERSION,
                     errorCode: 0,
                     detailInfo: rewardInfo
                 )
@@ -2360,7 +2443,7 @@ extension AdOptWebviewViewController: WKNavigationDelegate {
                     self.isAdRequestTimeOut = true
                     
                     let timeoutInfo = self.createTimeoutErrorInfo(adType: "interstitial", adUnit: currentAdUnit)
-                    self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "interstitial", status: "timeout", adUnit: currentAdUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: -1001, detailInfo: timeoutInfo)
+                    self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "interstitial", status: "timeout", adUnit: currentAdUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: -1001, detailInfo: timeoutInfo)
                 }
             }
             
@@ -2385,7 +2468,7 @@ extension AdOptWebviewViewController: WKNavigationDelegate {
                     let detailedError = self.getDetailedLoadErrorCode(error: error)
                     let detailedErrorInfo = self.createDetailedLoadErrorInfo(error: error, adType: "interstitial", adUnit: currentAdUnit)
                     
-                    self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "interstitial", status: detailedError, adUnit: currentAdUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: (error as NSError).code, detailInfo: detailedErrorInfo)
+                    self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "interstitial", status: detailedError, adUnit: currentAdUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: (error as NSError).code, detailInfo: detailedErrorInfo)
                     return
                 }
                 
@@ -2399,7 +2482,7 @@ extension AdOptWebviewViewController: WKNavigationDelegate {
         private func showExistingInterstitialAdUnified(callbackFunction: String, adUnit: String) {
             guard let interstitialAd = interstitialAd else {
                 let noAdInfo = createNoAdAvailableInfo(adType: "interstitial", adUnit: adUnit)
-                executeUnifiedCallback(callbackFunction: callbackFunction, adType: "interstitial", status: "ad_not_ready", adUnit: adUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: -1006, detailInfo: noAdInfo)
+                executeUnifiedCallback(callbackFunction: callbackFunction, adType: "interstitial", status: "ad_not_ready", adUnit: adUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: -1006, detailInfo: noAdInfo)
                 return
             }
             
@@ -2421,7 +2504,7 @@ extension AdOptWebviewViewController: WKNavigationDelegate {
     }
 }
 
-extension AdOptWebviewViewController: WKScriptMessageHandler {
+extension AdOptWebviewController: WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any] else { return }
         switch message.name {
@@ -2568,6 +2651,7 @@ extension AdOptWebviewViewController: WKScriptMessageHandler {
                     }
                 case "triggerBackAction":
                     handleBackAction()
+                    
                 case "requestRewardedAd":
                     if let adUnit = body["adUnit"] as? String,
                        let callbackFunction = body["callbackFunction"] as? String {
@@ -2641,7 +2725,7 @@ extension AdOptWebviewViewController: WKScriptMessageHandler {
     }
 }
 
-extension AdOptWebviewViewController {
+extension AdOptWebviewController {
     
     func setBackActionFromWeb(_ actionString: String) {
         switch actionString {
@@ -2669,7 +2753,7 @@ extension AdOptWebviewViewController {
     }
 }
 
-extension AdOptWebviewViewController {
+extension AdOptWebviewController {
     private var isShowingAlert: Bool {
         return presentedViewController is UIAlertController
     }
@@ -3218,7 +3302,7 @@ extension AdOptWebviewViewController {
         isLoadingAd = false
     }
 }
-extension AdOptWebviewViewController {
+extension AdOptWebviewController {
     private func createSimpleCancelInfo(adType: String, adUnit: String) -> String {
         let timestamp = Int(Date().timeIntervalSince1970 * 1000)
         return """
@@ -3236,7 +3320,7 @@ extension AdOptWebviewViewController {
         """
     }
 }
-extension AdOptWebviewViewController {
+extension AdOptWebviewController {
     @available(iOS 14.5, *)
     private func notifyWebWithATTStatusAndAdId(status: ATTrackingManager.AuthorizationStatus) {
         var statusString = ""
@@ -3521,7 +3605,7 @@ extension AdOptWebviewViewController {
     
     func preloadRewardedAd(adUnit: String, callbackFunction: String) {
         if isPreloadingRewardedAd {
-            executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_rewarded", status: "already_loading", adUnit: adUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: -1004, detailInfo: "Ad is already being loaded")
+            executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_rewarded", status: "already_loading", adUnit: adUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: -1004, detailInfo: "Ad is already being loaded")
             return
         }
         
@@ -3580,7 +3664,7 @@ extension AdOptWebviewViewController {
                 self.isPreloadingRewardedAd = false
                 
                 let detailedTimeoutInfo = self.createTimeoutErrorInfo(adType: "preload_rewarded", adUnit: currentAdUnit)
-                self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_rewarded", status: "timeout", adUnit: currentAdUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: -1001, detailInfo: detailedTimeoutInfo)
+                self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_rewarded", status: "timeout", adUnit: currentAdUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: -1001, detailInfo: detailedTimeoutInfo)
             }
         }
         
@@ -3596,7 +3680,7 @@ extension AdOptWebviewViewController {
                 let detailedError = self.getDetailedLoadErrorCode(error: error)
                 let detailedErrorInfo = self.createDetailedLoadErrorInfo(error: error, adType: "preload_rewarded", adUnit: currentAdUnit)
                 
-                self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_rewarded", status: detailedError, adUnit: currentAdUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: (error as NSError).code, detailInfo: detailedErrorInfo)
+                self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_rewarded", status: detailedError, adUnit: currentAdUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: (error as NSError).code, detailInfo: detailedErrorInfo)
                 return
             }
             
@@ -3604,7 +3688,7 @@ extension AdOptWebviewViewController {
             self.preloadedRewardedAdUnit = currentAdUnit
             
             let detailedSuccessInfo = self.createDetailedSuccessInfo(adType: "preload_rewarded", adUnit: currentAdUnit)
-            self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_rewarded", status: "success", adUnit: currentAdUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: 0, detailInfo: detailedSuccessInfo)
+            self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_rewarded", status: "success", adUnit: currentAdUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: 0, detailInfo: detailedSuccessInfo)
         }
     }
     
@@ -3626,7 +3710,7 @@ extension AdOptWebviewViewController {
         guard let preloadedAd = preloadedRewardedAd,
               let adUnit = preloadedRewardedAdUnit else {
             let noAdInfo = createNoPreloadedAdInfo(adType: "show_preloaded_rewarded", adUnit: preloadedRewardedAdUnit ?? "")
-            executeUnifiedCallback(callbackFunction: callbackFunction, adType: "show_preloaded_rewarded", status: "no_preloaded_ad", adUnit: preloadedRewardedAdUnit ?? "", sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: -1002, detailInfo: noAdInfo)
+            executeUnifiedCallback(callbackFunction: callbackFunction, adType: "show_preloaded_rewarded", status: "no_preloaded_ad", adUnit: preloadedRewardedAdUnit ?? "", sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: -1002, detailInfo: noAdInfo)
             return
         }
         
@@ -3644,7 +3728,7 @@ extension AdOptWebviewViewController {
             self.isPreloadedRewardEarned = true
             
             let rewardInfo = self.createSimpleRewardEarnedInfo(adType: "show_preloaded_rewarded", adUnit: adUnitForCallback)
-            self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "show_preloaded_rewarded", status: "reward_earned", adUnit: adUnitForCallback, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: 0, detailInfo: rewardInfo)
+            self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "show_preloaded_rewarded", status: "reward_earned", adUnit: adUnitForCallback, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: 0, detailInfo: rewardInfo)
         }
     }
     
@@ -3657,7 +3741,7 @@ extension AdOptWebviewViewController {
     
     func preloadInterstitialAd(adUnit: String, callbackFunction: String) {
         if isPreloadingInterstitialAd {
-            executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_interstitial", status: "already_loading", adUnit: adUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: -1004, detailInfo: "Ad is already being loaded")
+            executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_interstitial", status: "already_loading", adUnit: adUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: -1004, detailInfo: "Ad is already being loaded")
             return
         }
         
@@ -3693,7 +3777,7 @@ extension AdOptWebviewViewController {
                 self.isPreloadingInterstitialAd = false
                 
                 let detailedTimeoutInfo = self.createTimeoutErrorInfo(adType: "preload_interstitial", adUnit: currentAdUnit)
-                self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_interstitial", status: "timeout", adUnit: currentAdUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: -1001, detailInfo: detailedTimeoutInfo)
+                self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_interstitial", status: "timeout", adUnit: currentAdUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: -1001, detailInfo: detailedTimeoutInfo)
             }
         }
         
@@ -3709,7 +3793,7 @@ extension AdOptWebviewViewController {
                 let detailedError = self.getDetailedLoadErrorCode(error: error)
                 let detailedErrorInfo = self.createDetailedLoadErrorInfo(error: error, adType: "preload_interstitial", adUnit: currentAdUnit)
                 
-                self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_interstitial", status: detailedError, adUnit: currentAdUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: (error as NSError).code, detailInfo: detailedErrorInfo)
+                self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_interstitial", status: detailedError, adUnit: currentAdUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: (error as NSError).code, detailInfo: detailedErrorInfo)
                 return
             }
             
@@ -3717,7 +3801,7 @@ extension AdOptWebviewViewController {
             self.preloadedInterstitialAdUnit = currentAdUnit
             
             let detailedSuccessInfo = self.createDetailedSuccessInfo(adType: "preload_interstitial", adUnit: currentAdUnit)
-            self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_interstitial", status: "success", adUnit: currentAdUnit, sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: 0, detailInfo: detailedSuccessInfo)
+            self.executeUnifiedCallback(callbackFunction: callbackFunction, adType: "preload_interstitial", status: "success", adUnit: currentAdUnit, sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: 0, detailInfo: detailedSuccessInfo)
         }
     }
     
@@ -3725,7 +3809,7 @@ extension AdOptWebviewViewController {
         guard let preloadedAd = preloadedInterstitialAd,
               let adUnit = preloadedInterstitialAdUnit else {
             let noAdInfo = createNoPreloadedAdInfo(adType: "show_preloaded_interstitial", adUnit: preloadedInterstitialAdUnit ?? "")
-            executeUnifiedCallback(callbackFunction: callbackFunction, adType: "show_preloaded_interstitial", status: "no_preloaded_ad", adUnit: preloadedInterstitialAdUnit ?? "", sdkVersion: AdOptWebviewViewController.SDK_VERSION, errorCode: -1002, detailInfo: noAdInfo)
+            executeUnifiedCallback(callbackFunction: callbackFunction, adType: "show_preloaded_interstitial", status: "no_preloaded_ad", adUnit: preloadedInterstitialAdUnit ?? "", sdkVersion: AdOptWebviewController.SDK_VERSION, errorCode: -1002, detailInfo: noAdInfo)
             return
         }
         
@@ -3834,7 +3918,7 @@ extension AdOptWebviewViewController {
 }
 
 
-extension AdOptWebviewViewController: FullScreenContentDelegate {
+extension AdOptWebviewController: FullScreenContentDelegate {
     func adDidDismissFullScreenContent(_ ad: FullScreenPresentingAd) {
         var adType = "reward"
         let adname = currentAdUnitId
@@ -3861,7 +3945,7 @@ extension AdOptWebviewViewController: FullScreenContentDelegate {
                         adType: isPreloadedAd ? "show_preloaded_interstitial" : adType,
                         status: "success",
                         adUnit: adUnit,
-                        sdkVersion: AdOptWebviewViewController.SDK_VERSION,
+                        sdkVersion: AdOptWebviewController.SDK_VERSION,
                         errorCode: 0,
                         detailInfo: successInfo
                     )
@@ -3897,7 +3981,7 @@ extension AdOptWebviewViewController: FullScreenContentDelegate {
                         adType: isPreloadedAd ? "show_preloaded_rewarded" : adType,
                         status: "dismissed_with_reward",
                         adUnit: adUnit,
-                        sdkVersion: AdOptWebviewViewController.SDK_VERSION,
+                        sdkVersion: AdOptWebviewController.SDK_VERSION,
                         errorCode: 0,
                         detailInfo: rewardInfo
                     )
@@ -3921,7 +4005,7 @@ extension AdOptWebviewViewController: FullScreenContentDelegate {
                         adType: isPreloadedAd ? "show_preloaded_rewarded" : adType,
                         status: "cancelled",
                         adUnit: adUnit,
-                        sdkVersion: AdOptWebviewViewController.SDK_VERSION,
+                        sdkVersion: AdOptWebviewController.SDK_VERSION,
                         errorCode: -1003,
                         detailInfo: cancelInfo
                     )
@@ -3970,7 +4054,7 @@ extension AdOptWebviewViewController: FullScreenContentDelegate {
                     adType: isPreloadedAd ? "show_preloaded_\(adType)" : adType,
                     status: "present_failed",
                     adUnit: adUnit,
-                    sdkVersion: AdOptWebviewViewController.SDK_VERSION,
+                    sdkVersion: AdOptWebviewController.SDK_VERSION,
                     errorCode: (error as NSError).code,
                     detailInfo: errorInfo
                 )
@@ -4029,7 +4113,7 @@ extension Bundle {
             return bundle
         }
         
-        let currentBundle = Bundle(for: AdOptWebviewViewController.self)
+        let currentBundle = Bundle(for: AdOptWebviewController.self)
         if let bundleURL = currentBundle.url(forResource: bundleName, withExtension: "bundle"),
            let bundle = Bundle(url: bundleURL) {
             return bundle
